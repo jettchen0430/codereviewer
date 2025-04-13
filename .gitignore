@@ -1,0 +1,5 @@
+# 忽略 log 文件
+reviewer.log
+
+# 忽略 .env 文件
+.env
