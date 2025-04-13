@@ -1,0 +1,54 @@
+Always use descriptive variable names.
+Avoid single-letter variable names except for loop counters.
+Use consistent naming conventions (e.g., camelCase or snake_case).
+Function names should clearly indicate their purpose.
+Prefix boolean variables with 'is', 'has', or 'should' for clarity.
+Ensure functions are concise and focused on a single task.
+Avoid deeply nested loops or conditionals.
+Break large functions into smaller, reusable ones.
+Follow the DRY (Don't Repeat Yourself) principle.
+Group related logic into separate modules or classes.
+Avoid magic numbers in code.
+Define constants with meaningful names instead of hardcoding values.
+Use enums for fixed sets of values instead of strings or numbers.
+Keep configuration values in separate config files.
+Ensure proper error handling in functions.
+Use try-except blocks to catch specific exceptions.
+Avoid using bare except clauses; specify exception types.
+Raise exceptions with clear, descriptive messages.
+Handle edge cases explicitly rather than relying on defaults.
+Follow the project's indentation style.
+Use consistent spacing around operators and parentheses.
+Limit line length to 80-100 characters for readability.
+Add blank lines to separate logical sections of code.
+Align code blocks visually when it improves clarity.
+Add comments to explain why, not just what, the code does.
+Document function parameters, return values, and exceptions.
+Avoid redundant comments that restate obvious code.
+Keep documentation updated as code evolves.
+Use docstrings for all public functions and modules.
+Avoid unnecessary computations in loops.
+Use appropriate data structures for the task (e.g., sets for lookups).
+Batch database queries instead of calling them in loops.
+Cache results of expensive operations when applicable.
+Check for redundant or unused code.
+Sanitize all user inputs to prevent injection attacks.
+Avoid storing sensitive data (e.g., passwords) in plain text.
+Use environment variables for secrets and credentials.
+Validate data types and ranges before processing.
+Restrict file access to only necessary permissions.
+Write unit tests for all critical functions.
+Test both happy paths and edge cases.
+Avoid hardcoding test data; use fixtures or factories.
+Ensure tests are independent and repeatable.
+Check for sufficient test coverage in key areas.
+Write clear, descriptive commit messages.
+Commit logical chunks of work, not partial changes.
+Avoid committing commented-out code.
+Use meaningful branch names tied to features or fixes.
+Resolve merge conflicts carefully and test afterward.
+Close files and connections explicitly after use.
+Use context managers (e.g., 'with' statements) for resources.
+Avoid unnecessary global variables.
+Free up memory by clearing large objects when done.
+Monitor resource usage in long-running processes.
