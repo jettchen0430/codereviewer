@@ -1,8 +1,14 @@
 # Automated Code Review System / 自动代码审查系统
 
+[English](README.en.md) | [中文](README.zh.md)
+
 An intelligent code review system that integrates with GitLab and uses DeepSeek API for automated code analysis. The system leverages RAG (Retrieval-Augmented Generation) to provide context-aware code review suggestions.
 
 一个智能的代码审查系统，集成 GitLab 并使用 DeepSeek API 进行自动代码分析。系统利用 RAG（检索增强生成）技术提供上下文感知的代码审查建议。
+
+Please select your preferred language from the links above to view the full documentation.
+
+请从上方的链接选择您偏好的语言来查看完整文档。
 
 ## Features / 功能特点
 
