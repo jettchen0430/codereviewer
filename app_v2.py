@@ -5,8 +5,6 @@ import json
 import re
 import os
 import logging
-import rag
-import faiss
 from tenacity import retry, stop_after_attempt, wait_fixed
 import numpy as np
 
@@ -33,6 +31,11 @@ WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
 if not WEBHOOK_SECRET:
     raise ValueError("WEBHOOK_SECRET is required")
 
+# Added LightRAG server URL validation
+LIGHTRAG_SERVER_URL = os.getenv("LIGHTRAG_SERVER_URL")
+if not LIGHTRAG_SERVER_URL:
+    raise ValueError("LIGHTRAG_SERVER_URL is required")
+
 # ### 日志配置
 # logging.basicConfig(level=logging.INFO, filename="reviewer.log", format='%(asctime)s - %(levelname)s - %(message)s')
 # logger = logging.getLogger(__name__)
@@ -53,19 +56,8 @@ console_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 
-# ### 加载文档库和构建索引
-with open('documents.txt', 'r', encoding='utf-8') as f:
-    documents = [line.strip() for line in f.readlines()]
-
-doc_embeddings = rag.get_embeddings(documents)
-index = faiss.IndexFlatL2(doc_embeddings.shape[1])
-index.add(doc_embeddings)
-
 # ### 定义线程池
 executor = ThreadPoolExecutor(max_workers=5)
-
-# ### 定义全局缓存字典
-diff_cache = {}
 
 # ### Webhook 路由
 @app.route('/webhook', methods=['POST'])
@@ -99,16 +91,7 @@ def trigger_review(project_id, mr_iid):
         logger.error("Failed to fetch commit diff")
         return
     
-    # 缓存 diff_content
-    for diff in commit_diff:
-        diff_content = diff.get('diff', '')
-        diff_cache[(project_id, head_sha, diff.get('new_path', ''))] = diff_content
-    
     comments = analyze_code_with_llm(commit_diff)
-    if not comments:
-        logger.warning("No comments generated, retrying with cached diff")
-        comments = retry_analyze_code_with_llm(project_id, head_sha)
-    
     comments = comments[:3]  # 限制评论数量不超过 3 个
     submit_comments_to_commit(project_id, head_sha, comments)
     logger.info(f"Reviewed commit {head_sha} in project {project_id}, submitted {len(comments)} comments")
@@ -181,7 +164,7 @@ def add_new_file_line_numbers(diff_str: str) -> str:
 def call_deepseek_api(prompt: str) -> str:
     """调用 DeepSeek API 并返回响应内容，支持重试"""
     payload = {
-        "model": "deepseek-ai/DeepSeek-V3",
+        "model": "deepseek-ai/DeepSeek-V3", # Consider making model configurable
         "stream": False,
         "max_tokens": 512,
         "temperature": 0.7,
@@ -197,21 +180,57 @@ def call_deepseek_api(prompt: str) -> str:
     response.raise_for_status()
     return response.json()["choices"][0]["message"]["content"].strip()
 
-# ### 使用 LLM 分析代码
+# ### 使用 LLM 分析代码 (调用 LightRAG API 获取上下文)
 def analyze_code_with_llm(commit_diff):
-    """使用 DeepSeek R1 模型分析代码 diff 并生成评论"""
+    """使用 DeepSeek 模型分析代码 diff，并利用 LightRAG API 获取上下文，生成评论"""
     comments = []
     for diff in commit_diff:
         new_file_path = diff.get('new_path', '')
         diff_content = diff.get('diff', '')
         formatted_diff = add_new_file_line_numbers(diff_content)
-        retrieved_docs = rag.retrieve(diff_content, k=2)
-        context = "\n".join(retrieved_docs)
+        
+        # Call LightRAG API to get context
+        context = ""
+        try:
+            lightrag_query_url = f"{LIGHTRAG_SERVER_URL.rstrip('/')}/query"
+            # Using /context endpoint to get only the context string
+            # lightrag_query_url = f"{LIGHTRAG_SERVER_URL.rstrip('/')}/query/context" 
+            payload = {"query": diff_content, "mode": "mix"} # Consider making mode configurable
+            headers = {"Content-Type": "application/json"}
+            # Add API key header if LIGHTRAG_API_KEY is set
+            lightrag_api_key = os.getenv("LIGHTRAG_API_KEY")
+            if lightrag_api_key:
+                headers["Authorization"] = f"Bearer {lightrag_api_key}" # Assuming Bearer token auth based on README
+
+            response = requests.post(lightrag_query_url, json=payload, headers=headers, timeout=120)
+            response.raise_for_status()
+            
+            # --- Adjust context extraction based on actual LightRAG API response ---
+            # Example 1: Assuming response JSON has a 'context' key with the context string
+            # context = response.json().get("context", "") 
+            
+            # Example 2: Assuming response JSON has 'answer' key containing context
+            # context = response.json().get("answer", "") 
+            
+            # Example 3: If using /query, the context might be part of the 'answer' 
+            # For now, let's assume the main 'answer' contains the relevant context.
+            # This might need refinement based on how LightRAG structures its response.
+            context = response.json().get("response", "No context retrieved from LightRAG.")
+            logger.info(f"Retrieved context from LightRAG for {new_file_path}")
+
+        except requests.RequestException as e:
+            logger.error(f"Failed to query LightRAG API: {e}")
+            context = "Failed to retrieve context from LightRAG."
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse LightRAG response: {e} - Response Text: {response.text}")
+            context = "Failed to parse context from LightRAG response."
+
         prompt = f"""
         分析以下代码 diff，每行前带有行号和类型（例如 '1: + code' 或 '2: - code'）。  
         仅关注以 '+' 或 '-' 开头的行。  
         请用中文提供最多 3 条有意义的建议，每条严格按照以下格式：  
-        "行 X 类型 Y: 建议（30 字以内）, 原始代码"，其中 'X' 是行号，'Y' 是 '+' 或 '-'。\n
+        "行 X 类型 Y: 建议（30 字以内）, 原始代码"，其中 'X' 是行号，'Y' 是 '+' 或 '-'。
+
         此外，请参考以下相关文档以增强分析：  
         {context}
 
@@ -219,53 +238,40 @@ def analyze_code_with_llm(commit_diff):
         """
         try:
             llm_response = call_deepseek_api(prompt)
+            parsed_comments = 0
             for comment in llm_response.split('\n'):
-                # match = re.search(r'[Ll]ine\s*(\d+)\s*[Tt]ype\s*([+-])\s*:\s*(.*)', comment, re.IGNORECASE)
                 match = re.search(r'行\s*(\d+)\s*类型\s*([+-])\s*:\s*(.*)', comment)
                 if match:
-                    line, line_type, comment_text = match.groups()
-                    comments.append({"line": int(line), "file_path": new_file_path, "comment": comment_text, "line_type": line_type})
+                    if parsed_comments < 3: # Ensure we don't exceed overall limit due to multiple diffs
+                        line, line_type, comment_text = match.groups()
+                        comments.append({"line": int(line), "file_path": new_file_path, "comment": comment_text, "line_type": line_type})
+                        parsed_comments += 1
+                    else:
+                        break # Stop processing comments for this diff if limit reached
                 else:
                     logger.warning(f"Failed to parse comment: {comment}")
+            if parsed_comments == 0 and llm_response: # Log if LLM responded but no comments were parsed
+                 logger.warning(f"LLM responded for {new_file_path}, but no comments were parsed. Response: {llm_response}")
+
         except Exception as e:
-            logger.error(f"LLM analysis failed: {e}")
-            comments.append({"line": 1, "file_path": new_file_path, "comment": "Code analysis failed, please review manually", "line_type": "+"})
-    return comments[:3]
-
-# ### 重试 LLM 分析
-def retry_analyze_code_with_llm(project_id, sha):
-    """使用缓存的 diff_content 重新分析代码"""
-    comments = []
-    for key in diff_cache:
-        if key[0] == project_id and key[1] == sha:
-            diff_content = diff_cache[key]
-            formatted_diff = add_new_file_line_numbers(diff_content)
-            prompt = f"""
-            Analyze the following code diff, where each line is prefixed with its line number and type (e.g., '1: + code' or '2: - code'). 
-            focusing only on the lines prefixed with '-' or '+'
-            Provide up to 3 meaningful comments.
-            Each comment should be in the strictly format "Line X Type Y: comment, original line code", 
-            where 'X' is the original line number, 'Y' is the line type ('+' or '-'), and the comment is in 30 words.\n
-
-            {formatted_diff}
-            """
-            try:
-                llm_response = call_deepseek_api(prompt)
-                for comment in llm_response.split('\n'):
-                    match = re.search(r'[Ll]ine\s*(\d+)\s*[Tt]ype\s*([+-])\s*:\s*(.*)', comment, re.IGNORECASE)
-                    if match:
-                        line, line_type, comment_text = match.groups()
-                        comments.append({"line": int(line), "file_path": key[2], "comment": comment_text, "line_type": line_type})
-            except Exception as e:
-                logger.error(f"Retry LLM analysis failed: {e}")
-    return comments[:3]
+            logger.error(f"LLM analysis failed for {new_file_path}: {e}")
+            # Avoid adding duplicate failure messages if multiple diffs fail
+            if not any(c.get("comment", "") == "Code analysis failed, please review manually" and c.get("file_path") == new_file_path for c in comments):
+                 comments.append({"line": 1, "file_path": new_file_path, "comment": "Code analysis failed, please review manually", "line_type": "+"})
+            
+    return comments[:3] # Apply overall limit again just in case
 
 # ### 提交评论到 GitLab
 def submit_comments_to_commit(project_id, sha, comments):
     """通过 GitLab API 提交评论到指定提交"""
     url = f"{GITLAB_URL}/projects/{project_id}/repository/commits/{sha}/comments"
     headers = {"PRIVATE-TOKEN": GITLAB_TOKEN}
+    submitted_count = 0
     for comment in comments:
+        if submitted_count >= 3: # Double check limit before posting
+             logger.warning(f"Skipping additional comments for commit {sha} as limit of 3 is reached.")
+             break
+             
         line_type = "new" if comment["line_type"] == '+' else "old"
         payload = {
             "note": comment["comment"],
@@ -277,6 +283,7 @@ def submit_comments_to_commit(project_id, sha, comments):
             response = requests.post(url, headers=headers, json=payload, timeout=30)
             if response.status_code == 201:
                 logger.info(f"Comment posted on line {comment['line']} of {comment['file_path']} with line_type {line_type}")
+                submitted_count += 1
             else:
                 logger.error(f"Failed to post comment: {response.status_code} - {response.text}")
         except requests.RequestException as e:
@@ -284,4 +291,4 @@ def submit_comments_to_commit(project_id, sha, comments):
 
 # ### 主程序入口
 if __name__ == "__main__":
-    app.run(port=8000)
+    app.run(host='0.0.0.0', port=8000) # Changed host to 0.0.0.0 for potential container usage
