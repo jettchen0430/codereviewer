@@ -71,8 +71,11 @@ class DeepSeekClient:
         }
         
         try:
+            logger.info(f"Sending code review request to DeepSeek API for diff analysis")
             response = self._make_request(payload)
-            return response["choices"][0]["message"]["content"]
+            content = response["choices"][0]["message"]["content"]
+            logger.info(f"Received LLM response for code review: {content}")
+            return content
         except Exception as e:
             logger.error(f"Failed to analyze code diff: {e}")
             return "代码分析失败，请检查API配置。"
@@ -203,8 +206,11 @@ class DeepSeekClient:
         }
         
         try:
+            logger.info(f"Sending summary generation request to DeepSeek API")
             response = self._make_request(payload)
-            return response["choices"][0]["message"]["content"]
+            content = response["choices"][0]["message"]["content"]
+            logger.info(f"Received LLM response for summary generation: {content}")
+            return content
         except Exception as e:
             logger.error(f"Failed to generate review summary: {e}")
             return f"代码审查完成，共发现 {len(comments)} 个需要改进的问题。"

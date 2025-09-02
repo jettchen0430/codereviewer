@@ -126,6 +126,9 @@ class CodeReviewer:
                 # 分析代码差异
                 analysis = self.deepseek_client.analyze_code_diff(diff.diff, context)
                 
+                # 记录LLM返回的原始分析结果
+                logger.info(f"LLM analysis for {diff.new_path}: {analysis}")
+                
                 # 解析评论
                 comments = self._parse_comments(analysis, diff.new_path)
                 if comments:
@@ -165,6 +168,9 @@ class CodeReviewer:
                 line_num = int(match.group(1))
                 line_type = LineType(match.group(2))
                 comment_text = match.group(3).strip()
+                
+                # 记录解析出的评论内容
+                logger.info(f"Parsed comment for {file_path} line {line_num} ({line_type}): {comment_text}")
                 
                 comment = Comment(
                     line=line_num,
@@ -219,9 +225,9 @@ class CodeReviewer:
                 
                 if success:
                     posted_count += 1
-                    logger.info(f"Posted comment on line {comment.line} of {comment.file_path}")
+                    logger.info(f"Posted comment on line {comment.line} of {comment.file_path}: {comment.comment}")
                 else:
-                    logger.warning(f"Failed to post comment on line {comment.line}")
+                    logger.warning(f"Failed to post comment on line {comment.line} of {comment.file_path}: {comment.comment}")
             
             state["posted_comments_count"] = posted_count
             logger.info(f"Posted {posted_count}/{len(comments)} comments")
@@ -240,7 +246,7 @@ class CodeReviewer:
             summary = self.deepseek_client.generate_review_summary(comments)
             
             state["review_summary"] = summary
-            logger.info("Summary generation completed")
+            logger.info(f"Summary generation completed: {summary}")
             return state
         except Exception as e:
             logger.error(f"Failed to generate summary: {e}")
